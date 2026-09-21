@@ -1,0 +1,45 @@
+# ============================================================
+# 凭据 —— 最高优先级，任何情况下不得入库
+# doc/login.md 含明文 SSH 密码；repo 根 .gitignore 只覆盖 .env，
+# 在这里显式排除，否则一次 `git add .` 就会推到公开仓库。
+# ============================================================
+doc/login.md
+login.md
+.env
+
+# ---- 只读参考代码树（本地 clone，不入库）----
+# base/DiffusionDrive 与 base/patch_policy 各自带 .git，直接 `git add` 会被登记成
+# 空的 gitlink（外部仓库收不到内容、clone 后是坏指针）。它们是只读参考，
+# 出处与 commit SHA 记在 README.md，需要时按 README 重新 clone 即可。
+base/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+
+# ---- 训练产物 / 大文件（单 ckpt ~417MB）----
+outputs/
+*.pt
+*.pth
+
+# ---- 日志 ----
+*.log
+*.out
+
+# ---- 审计产物里需要入库的小文件（P1 确定性产物，便于复现对比）----
+!anchors/*.pt
+!anchors/*.json
+
+# ============================================================
+# 主机侧操作脚本 —— 不公开
+# ============================================================
+# 这三份是「本机 <-> 实验室服务器」的通道代码：ssh_run.py 解析 .secrets/login.md
+# 并建立 SSH 连接，sync.py / pull.py 在它之上做单向同步。它们不含任何明文凭据
+# （凭据只存在于 .secrets/login.md），但把「如何连到那台机器」的代码公开没有必要，
+# 也与本研究无关。本地保留，不入库。
+scripts/ssh_run.py
+scripts/sync.py
+scripts/pull.py
+
+# ---- 一次性诊断脚本，未被任何入口引用（死代码）----
+patch_policy/_resume_check.py
