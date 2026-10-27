@@ -53,11 +53,11 @@ class GlobalSelfAttention(nn.Module):
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         self.register_buffer("mask", build_global_mask(n_state, n_query))
-        # Attention kernel selector -- see gpt.set_attn_impl. Default "current" keeps
-        # every recorded global-policy run bit-identical; "sdpa" runs the same math
-        # through F.scaled_dot_product_attention with the same bool mask (True == may
-        # attend) and the same dropout placement.
-        self.attn_impl = "current"
+        # Attention kernel selector -- see gpt.set_attn_impl. "sdpa" is the default: same
+        # math through F.scaled_dot_product_attention, same bool mask (True == may
+        # attend), same dropout placement. Pass `--attn current` to restore the
+        # hand-written chain that produced the archived global-policy runs.
+        self.attn_impl = "sdpa"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape

@@ -58,7 +58,7 @@ echo "[lock] $(date '+%F %T') GPU2 lock acquired ($LOCK) -> $(basename "$OUT") r
 CUDA_VISIBLE_DEVICES=2 $HOME/miniconda3/envs/wemm-p1/bin/python -u \
     -m patch_policy.eval_rollout \
     --config "$CONFIG" --ckpt "$CKPT" --out "$OUT" --rng-seed "$RNGSEED" \
-    "${EXTRA[@]}" >> "$LOG" 2>&1
+    --attn current "${EXTRA[@]}" >> "$LOG" 2>&1
 rc=$?
 echo "[lock] $(date '+%F %T') rollout done rc=$rc -> $(basename "$OUT")" >> "$LOG"
 exit $rc

@@ -35,13 +35,14 @@ bash scripts/test_gpu2_lock.sh
 
 echo "=== P3-4 smoke training: 100 steps, 6 episodes, batch 2 ==="
 CUDA_VISIBLE_DEVICES=2 $PY -u -m patch_policy.train --config "$CFG" --smoke \
-    --train-seed 0 --save-dir outputs/p3_smoke_train > logs/p3_smoke_train.log 2>&1
+    --train-seed 0 --save-dir outputs/p3_smoke_train --attn current \
+    > logs/p3_smoke_train.log 2>&1
 echo "  smoke_train rc=$?"
 
 echo "=== P3-5 tiny REAL training to produce a checkpoint (1 epoch, 6 episodes) ==="
 CUDA_VISIBLE_DEVICES=2 $PY -u -m patch_policy.train --config "$CFG" \
     --train-seed 0 --max-episodes 6 --epochs 1 --ckpt-epochs 0,1 \
-    --save-dir outputs/p3_ckpt > logs/p3_ckpt_train.log 2>&1
+    --save-dir outputs/p3_ckpt --attn current > logs/p3_ckpt_train.log 2>&1
 echo "  ckpt_train rc=$?"
 ls -la outputs/p3_ckpt/seed0/ 2>&1
 

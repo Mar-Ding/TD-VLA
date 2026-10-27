@@ -39,7 +39,7 @@ df -h $HOME | tail -1
 echo "=== P4-A training: $EPOCHS epochs, ckpt at $CKPT_EPOCHS ==="
 nohup env CUDA_VISIBLE_DEVICES=2 $PY -u -m patch_policy.train --config "$CFG" \
     --train-seed 0 --epochs "$EPOCHS" --ckpt-epochs "$CKPT_EPOCHS" \
-    --save-dir "$OUT" > logs/p4_train.log 2>&1 &
+    --save-dir "$OUT" --attn current > logs/p4_train.log 2>&1 &
 TRAIN_PID=$!
 echo "  train pid=$TRAIN_PID log=logs/p4_train.log"
 

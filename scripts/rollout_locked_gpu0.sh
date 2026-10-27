@@ -69,7 +69,7 @@ echo "[lock] $(date '+%F %T') gpu0 pre  $(nvidia-smi -i 0 --query-gpu=temperatur
 CUDA_VISIBLE_DEVICES=0 $HOME/miniconda3/envs/wemm-p1/bin/python -u \
     -m patch_policy.eval_rollout \
     --config "$CONFIG" --ckpt "$CKPT" --out "$OUT" --rng-seed "$RNGSEED" \
-    "${EXTRA[@]}" >> "$LOG" 2>&1
+    --attn current "${EXTRA[@]}" >> "$LOG" 2>&1
 rc=$?
 
 echo "[lock] $(date '+%F %T') gpu0 post $(nvidia-smi -i 0 --query-gpu=temperature.gpu,clocks.sm,power.draw,utilization.gpu --format=csv,noheader)" >> "$LOG"

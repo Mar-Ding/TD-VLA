@@ -21,7 +21,7 @@
 | [2026-09-18_DP_orig_run_log.md](2026-09-18_DP_orig_run_log.md) | 09-18 | DP 臂 | **上游自己的** Diffusion Policy 原样跑第三臂的运行记录 |
 | [2026-09-19_ablation_record.md](2026-09-19_ablation_record.md) | 09-19 | 总记录 | 两批消融的数字集中到一处：**(A)** K 消融 4 组、**(B)** 三臂动作头 |
 | [2026-09-20_400ep_run_log.md](2026-09-20_400ep_run_log.md) | 09-20 | 400ep | K=20/K=40 各 400 epoch **从头**训练 + 每 5 ep 一次 n=100 rollout 的运行记录；**09-21 16:22 终止于 ep137/ep92**（§11）。含「计时无效」的原因（§3）与**训练速度实测**（§10） |
-| [2026-10-27_attn_sdpa.md](2026-10-27_attn_sdpa.md) | 10-27 | Kernel | attention 手写链 ↔ SDPA 的双实现：parity（fp32 舍入级、bf16 4.9e-4）、mask 语义、**实际选中的 backend**（本机 mem-efficient，非 flash），以及**为什么 FM 线的 2.29× 不能外推到本仓库** |
+| [2026-10-27_attn_sdpa.md](2026-10-27_attn_sdpa.md) | 10-27 | Kernel | **默认 kernel 已从手写链切成 SDPA**：三处 attention 全覆盖、parity（fp32 舍入级、bf16 4.9e-4）、mask 语义、**实际选中的 backend**（本机 mem-efficient，非 flash）、旧数字靠 `--attn current` 复现，以及**为什么 FM 线的 2.29× 不能外推到本仓库** |
 
 ## 尚未交付（计划中的名字按同一约定）
 

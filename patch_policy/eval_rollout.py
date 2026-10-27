@@ -58,6 +58,7 @@ from patch_policy.dataset import (
 )
 from patch_policy.encoder import build_cond_encoder, build_encoder
 from patch_policy.vqbet import BehaviorTransformer
+from patch_policy.gpt import set_attn_impl
 from patch_policy.train import _adaln_variance, build_model
 
 # env imports (needs gym/pymunk/pygame/cv2/shapely/skimage in wemm-p1 env)
@@ -171,6 +172,11 @@ def _load_hist_policy(path: str, device) -> torch.nn.Module:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/pusht.yaml")
+    ap.add_argument("--attn", choices=("current", "sdpa"), default=None,
+                    help="attention kernel for the rollout policy. Default = module default "
+                         "('sdpa' since 2026-10-27). Pass 'current' to re-measure a rollout "
+                         "under the same kernel that produced the archived n=100 numbers -- "
+                         "rollout wall-clock is kernel-sensitive, so compare like with like.")
     ap.add_argument("--train-seed", type=int, default=0)
     ap.add_argument("--ckpt", default=None, help="override ckpt path")
     ap.add_argument("--num-envs", type=int, default=10)
@@ -296,6 +302,18 @@ def main() -> None:
         print(f"[eval] policy params {sum(p.numel() for p in model.parameters())/1e6:.2f}M, "
               f"vqvae_is_fit={model.vqvae_is_fit}, "
               f"vqvae_requires_grad={any(p.requires_grad for p in model.vqvae.parameters())}")
+
+    # ---- attention kernel (applies to both the plain and the hist-adapter policy) ----
+    if args.attn is not None:
+        n_attn = set_attn_impl(model, args.attn)
+        if n_attn == 0:
+            raise SystemExit(f"--attn {args.attn}: no module exposes an attn_impl selector")
+        print(f"[attn] rollout kernel={args.attn} on {n_attn} attention module(s) (explicit)")
+    else:
+        attn_mods = [m.attn_impl for m in model.modules() if hasattr(m, "attn_impl")]
+        impls = sorted(set(attn_mods)) or ["none"]
+        print(f"[attn] rollout kernel={','.join(impls)} on {len(attn_mods)} attention "
+              f"module(s) (module default)")
 
     # ---- online vision encoder (frozen, wemm | dino per cfg.encoder_name) ---
     encoder, _ = build_encoder(cfg)

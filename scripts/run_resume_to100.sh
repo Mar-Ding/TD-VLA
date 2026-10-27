@@ -118,7 +118,7 @@ for entry in $ARMS; do
     echo "=== K=$K GPU$GPU -> e=41..$EPOCHS, ckpt at $CKPT_EPOCHS, log=$LOG ==="
     nohup env CUDA_VISIBLE_DEVICES=$GPU $PY -u -m patch_policy.train \
         --config "$CFG" --train-seed "$TRAIN_SEED" --epochs "$EPOCHS" \
-        --ckpt-epochs "$CKPT_EPOCHS" --save-dir "$OUT" --resume "$CK" \
+        --ckpt-epochs "$CKPT_EPOCHS" --save-dir "$OUT" --resume "$CK" --attn current \
         > "$LOG" 2>&1 &
     echo "  pid=$! $(date '+%T')"
     PIDS="$PIDS $!:K$K:$LOG"

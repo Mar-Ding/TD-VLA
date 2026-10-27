@@ -67,7 +67,7 @@ for pair in $ARMS; do
     echo "=== K=$K GPU$GPU cfg=$CFG out=$OUT ==="
     nohup env CUDA_VISIBLE_DEVICES=$GPU $PY -u -m patch_policy.train \
         --config "$CFG" --train-seed "$TRAIN_SEED" --epochs "$EPOCHS" \
-        --ckpt-epochs "$CKPT_EPOCHS" --save-dir "$OUT" > "$LOG" 2>&1 &
+        --ckpt-epochs "$CKPT_EPOCHS" --save-dir "$OUT" --attn current > "$LOG" 2>&1 &
     echo "  pid=$! log=$LOG"
     PIDS="$PIDS $!:K$K"
     sleep 5

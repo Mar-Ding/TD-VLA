@@ -493,13 +493,13 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/pusht.yaml")
     ap.add_argument("--attn", choices=("current", "sdpa"), default=None,
-                    help="attention kernel. 'current' = hand-written q@k^T -> softmax -> @v "
-                         "(the default in every module, so archived runs reproduce "
-                         "bit-identically); 'sdpa' = F.scaled_dot_product_attention, same math "
-                         "and same mask, without materializing the [B,nh,T,T] score matrix. "
-                         "Measured on the sibling Patch Policy + FM line: bf16 + sdpa "
-                         "125.66 vs 288.01 ms/step, peak VRAM 4249 vs 9001 MB. See "
-                         "doc/2026-10-27_attn_sdpa.md.")
+                    help="attention kernel. Default = each module's own default, which is "
+                         "'sdpa' since 2026-10-27: F.scaled_dot_product_attention -- same math, "
+                         "same mask, without materializing the [B,nh,T,T] score matrix "
+                         "(trunk: 1.35x fp32 / 2.02x bf16, ~53%% less peak VRAM). "
+                         "'current' = the hand-written q@k^T -> softmax -> @v chain that "
+                         "produced every number in doc/, kept for bit-identical "
+                         "reproduction. See doc/2026-10-27_attn_sdpa.md.")
     ap.add_argument("--smoke", action="store_true", help="100-step pipeline smoke test")
     ap.add_argument("--train-seed", type=int, default=None, dest="train_seed",
                     help="training randomness seed (torch/np/python/model init/dataloader/VQ-BeT)")
@@ -747,10 +747,15 @@ def main() -> None:
         n_attn = set_attn_impl(model, args.attn)
         if n_attn == 0:
             raise SystemExit(f"--attn {args.attn}: no module exposes an attn_impl selector")
-        print(f"[attn] kernel={args.attn} on {n_attn} attention module(s)")
+        print(f"[attn] kernel={args.attn} on {n_attn} attention module(s) (explicit)")
     else:
-        n_attn = set_attn_impl(model, "current")
-        print(f"[attn] kernel=current (module default) on {n_attn} attention module(s)")
+        # Report what the modules actually are -- do NOT silently rewrite them. Since
+        # 2026-10-27 the module default is "sdpa"; a run log without this line cannot be
+        # compared against doc/ numbers, where "current" was the only kernel.
+        attn_mods = [m.attn_impl for m in model.modules() if hasattr(m, "attn_impl")]
+        impls = sorted(set(attn_mods)) or ["none"]
+        print(f"[attn] kernel={','.join(impls)} on {len(attn_mods)} attention module(s) "
+              f"(module default)")
     optim = model.configure_optimizers(cfg.weight_decay, cfg.lr, tuple(cfg.betas))
     # grad_norm / layer_grad_norm are computed over the POLICY optimizer's parameters
     # ONLY. The VQ tokenizer is in no optimizer, so any grad it carries is not an

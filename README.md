@@ -181,15 +181,18 @@ python tests/test_td_contract.py
 pytest tests/test_td_contract.py -q
 
 # 2. train one arm from scratch
+#    --attn current: the kernel these recorded runs used. The module default became "sdpa"
+#    on 2026-10-27; drop the flag for new work (faster, same math) and keep it to reproduce
+#    a number in doc/ bit-for-bit. Every run prints the kernel it actually used.
 python -u -m patch_policy.train --config configs/pusht_dino_p256_td.yaml \
     --train-seed 0 --epochs 100 --ckpt-epochs 10,20,30,40,50,60,70,80,90,100 \
-    --save-dir outputs/p4_td
+    --save-dir outputs/p4_td --attn current
 
 # 3. closed-loop rollout (n=100, seed 0)
 python -u -m patch_policy.eval_rollout \
     --config configs/pusht_dino_p256_td.yaml \
     --ckpt outputs/p4_td/seed0/ckpt_epoch30_step86760.pt \
-    --out outputs/p4_td/rollout/ep30_n100 --rng-seed 0
+    --out outputs/p4_td/rollout/ep30_n100 --rng-seed 0 --attn current
 
 # 4. the full paired arms, with preflight / lock / keep-best pruning
 bash scripts/run_400ep_train.sh
@@ -204,20 +207,22 @@ point. The four commands above are what you run to reproduce the study anywhere 
 
 ---
 
-## Attention kernel: hand-written vs SDPA
+## Attention kernel: SDPA (default) vs hand-written
 
 Both arms share one trunk, and that trunk's attention has **two implementations of the same
-math**, chosen at runtime:
+math**, selected at runtime:
 
 | `attn_impl` | what runs | when |
 |---|---|---|
-| `current` (**default**) | `q@k^T -> masked_fill(-inf) -> softmax -> @v`, materialises `[B, nh, T, T]` | every run in `doc/`. Kept as the default so those numbers reproduce **bit-identically** |
-| `sdpa` | `F.scaled_dot_product_attention` with the *same* bool mask, dropout probability and head layout | opt-in: `--attn sdpa` |
+| `sdpa` (**default** since 2026-10-27) | `F.scaled_dot_product_attention` with the *same* bool mask, dropout probability and head layout | new work — never materialises the `[B, nh, T, T]` score matrix |
+| `current` | `q@k^T -> masked_fill(-inf) -> softmax -> @v`, materialises it | `--attn current`, to reproduce a number in `doc/` **bit-identically** |
 
 It covers all three attention sites — `gpt.CausalSelfAttention` (block-causal),
 `global_policy.GlobalSelfAttention` (custom mask), `td_head.CrossAttention` (no mask) — via
-one helper, `gpt.set_attn_impl`, which `train.py --attn` calls. A non-default request that
-matches zero modules is a `SystemExit`, not a silent no-op.
+one helper, `gpt.set_attn_impl`, which both `train.py --attn` and `eval_rollout.py --attn`
+call. A non-default request that matches zero modules is a `SystemExit`, not a silent no-op.
+Both entry points print `[attn] kernel=... on N attention module(s)`, so a run log always
+says which kernel produced it.
 
 Measured on this repo's trunk (8 layers / 512 dim / S=1280, batch 4, fwd+bwd+AdamW,
 CUDA events, RTX 4060 Laptop — a Windows torch build **without** FlashAttention compiled in,
@@ -230,14 +235,15 @@ so the fused backend here is mem-efficient):
 
 Parity is a test, not a promise: `tests/test_attn_sdpa.py` (fp32 max-abs 9e-8..4e-7; bf16 at
 the production shape 4.9e-4) and it also pins the mask convention by perturbing a late key and
-asserting earlier blocks do not move.
+asserting earlier blocks do not move, and pins the default itself so it cannot flip silently.
 
-Two things this deliberately does **not** claim: (1) "SDPA" is not a synonym for
+Three things this deliberately does **not** claim: (1) "SDPA" is not a synonym for
 "FlashAttention" — which fused kernel is selected depends on dtype, mask, build and card;
 (2) SDPA changes summation order, so a run diverges from `current` in the last digits and the
-final weights are **not** bit-identical. `doc/2026-10-27_attn_sdpa.md` has the full ledger,
-including why the 2.29x figure from the sibling Flow-Matching line does not transfer here
-(that one includes bf16 AMP; this repo's `train.py` has no `--amp`).
+final weights are **not** bit-identical — that is why `doc/` results need `--attn current`;
+(3) the 2.29x on the sibling Flow-Matching line does **not** transfer here — that one includes
+bf16 AMP, and this `train.py` has no `--amp`. Full ledger, including the driver scripts that
+are pinned back to `--attn current`: `doc/2026-10-27_attn_sdpa.md`.
 
 ---
 

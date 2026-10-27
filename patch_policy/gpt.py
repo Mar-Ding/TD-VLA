@@ -53,17 +53,19 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = n_embd // n_head
         self.register_buffer("mask", generate_block_causal_mask(n_patches, block_size))
         # ---- attention kernel selector -------------------------------------------
-        # "current" = the hand-written q@k^T -> masked_fill(-inf) -> softmax -> @v chain
-        # and is the DEFAULT, so every run recorded in doc/ stays bit-identical.
-        # "sdpa" routes the SAME math through F.scaled_dot_product_attention: same mask
-        # object (bool, True == may attend -- exactly the convention
-        # generate_block_causal_mask builds), same n_head/head_dim, same dropout
-        # probability applied at the same point in the chain, same residual path.
-        # Optional because the materialized [B, nh, T, T] score matrix is the largest
+        # "sdpa" (DEFAULT since 2026-10-27) routes the math through
+        # F.scaled_dot_product_attention. "current" is the hand-written
+        # q@k^T -> masked_fill(-inf) -> softmax -> @v chain that produced every number
+        # in doc/ and is kept for bit-identical reproduction (`--attn current`).
+        # Both are the same function: same mask object (bool, True == may attend -- exactly
+        # the convention generate_block_causal_mask builds), same n_head/head_dim, same
+        # dropout probability at the same point in the chain, same residual path.
+        # Why bother: the materialized [B, nh, T, T] score matrix is the largest
         # intermediate in this model (T = block_size*n_patches = 1280, nh = 8
         # -> 419 MB fp32, plus a second copy for masked_fill); the fused kernels never
-        # build it. Set it with `set_attn_impl` / `train.py --attn sdpa`, not by hand.
-        self.attn_impl = "current"
+        # build it. Measured on the trunk: 1.35x fp32, 2.02x bf16, ~53% less peak VRAM.
+        # Set it with `set_attn_impl` / `--attn`, not by hand.
+        self.attn_impl = "sdpa"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape

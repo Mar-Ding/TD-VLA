@@ -283,11 +283,12 @@ class CrossAttention(nn.Module):
         self.v = nn.Linear(ctx_dim, d_model)
         self.out = nn.Linear(d_model, d_model)
         self.attn_dropout = nn.Dropout(dropout)
-        # Kernel selector -- see gpt.set_attn_impl. This site has NO mask at all, so it is
-        # the one place where the fused kernels get the friendliest layout: no
-        # [B, nh, Q, M] score matrix is ever built, and q_len=20 x m_len=5 is small
-        # enough that the win here is memory/launch overhead, not FLOPs.
-        self.attn_impl = "current"
+        # Kernel selector -- see gpt.set_attn_impl. "sdpa" is the default; "current" is the
+        # hand-written chain used by the archived runs (`--attn current`). This site has NO
+        # mask at all, so it is the one place where the fused kernels get the friendliest
+        # layout: no [B, nh, Q, M] score matrix is ever built, and q_len=20 x m_len=5 is
+        # small enough that the win here is memory/launch overhead, not FLOPs.
+        self.attn_impl = "sdpa"
 
     def forward(self, query: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
         """query [B,Q,D] x ctx [B,M,C] -> [B,Q,D]."""

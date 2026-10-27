@@ -4,7 +4,8 @@ Why this is a test and not a paragraph: the SDPA path is only defensible if it i
 SAME function, bit-for-bit up to summation order. A report can claim parity once; this
 file re-checks it on every run, for all THREE attention sites, and fails if a later edit
 touches the mask convention (bool True == may attend), the `is_causal` flag, the dropout
-placement, or the head reshape.
+placement, the head reshape, or the module DEFAULT (which since 2026-10-27 is "sdpa";
+"current" is the archived-runs kernel you get back with `--attn current`).
 
 Tolerances are dtype-specific and carry their reason:
   fp32 (CPU)   1e-6   -- same math, different summation order. Measured 1e-7..2e-6.
@@ -224,7 +225,7 @@ def test_set_attn_impl_contract():
     check("non-attention modules are untouched",
           not hasattr(model["plain"], "attn_impl"))
     n_back = set_attn_impl(model, "current")
-    check("switch is reversible (default restored)", n_back == want and
+    check("switch is reversible in both directions", n_back == want and
           all(m.attn_impl == "current" for k, m in model.items() if k != "plain"))
     try:
         set_attn_impl(model, "flash2")
@@ -262,6 +263,21 @@ def test_cuda_bf16_parity():
           f"bf16={torch.cuda.is_bf16_supported()} {' '.join(backends)}")
 
 
+def test_module_default_is_sdpa():
+    """The production default. If someone flips it back, every new run silently changes
+    kernel and the numbers stop being comparable to doc/ without anyone noticing."""
+    check("CausalSelfAttention default == sdpa",
+          CausalSelfAttention(64, 4, 3, 16, 0.0).attn_impl == "sdpa",
+          CausalSelfAttention(64, 4, 3, 16, 0.0).attn_impl)
+    if HAVE_VQ_DEP:
+        check("GlobalSelfAttention default == sdpa",
+              GlobalSelfAttention(64, 4, 5, 3, 0.0).attn_impl == "sdpa")
+        check("CrossAttention default == sdpa",
+              CrossAttention(64, 4, ctx_dim=32, dropout=0.0).attn_impl == "sdpa")
+    else:
+        check("global/cross default == sdpa", True, "SKIPPED: no VQ dep")
+
+
 def main():
     torch.set_num_threads(2)
     print("== attention kernel parity: current vs sdpa ==")
@@ -274,6 +290,8 @@ def main():
     test_dropout_is_applied_in_training_mode()
     print("\n== whole trunk ==")
     test_gpt_trunk_end_to_end_fp32()
+    print("\n== module default ==")
+    test_module_default_is_sdpa()
     print("\n== selector contract ==")
     test_set_attn_impl_contract()
     print("\n== cuda / bf16 ==")

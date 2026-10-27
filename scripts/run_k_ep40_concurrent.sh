@@ -87,7 +87,7 @@ for pair in $ARMS; do
         s=$(date +%s)
         CUDA_VISIBLE_DEVICES=$G $PY -u -m patch_policy.eval_rollout \
             --config "$CFG" --ckpt "$CKPT" --out "$OUT" --rng-seed 0 \
-            --num-evals 100 --num-envs 10 --train-seed 0 > "$LOG" 2>&1
+            --num-evals 100 --num-envs 10 --train-seed 0 --attn current > "$LOG" 2>&1
         rc=$?
         e=$(date +%s)
         echo "[done] $(date '+%F %T') K=$K gpu=$G rc=$rc wall=$((e-s))s" >> "$DLOG"
