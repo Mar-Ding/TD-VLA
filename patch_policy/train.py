@@ -36,6 +36,7 @@ from patch_policy.dataset import (
     precompute_dino_in_memory,
     split_episodes,
 )
+from patch_policy.gpt import set_attn_impl
 from patch_policy.adaln import _stats
 from patch_policy.vqbet import BehaviorTransformer
 
@@ -491,6 +492,14 @@ def _capture_adaln_diag(model, epoch: int, step: int, rows: list) -> dict | None
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/pusht.yaml")
+    ap.add_argument("--attn", choices=("current", "sdpa"), default=None,
+                    help="attention kernel. 'current' = hand-written q@k^T -> softmax -> @v "
+                         "(the default in every module, so archived runs reproduce "
+                         "bit-identically); 'sdpa' = F.scaled_dot_product_attention, same math "
+                         "and same mask, without materializing the [B,nh,T,T] score matrix. "
+                         "Measured on the sibling Patch Policy + FM line: bf16 + sdpa "
+                         "125.66 vs 288.01 ms/step, peak VRAM 4249 vs 9001 MB. See "
+                         "doc/2026-10-27_attn_sdpa.md.")
     ap.add_argument("--smoke", action="store_true", help="100-step pipeline smoke test")
     ap.add_argument("--train-seed", type=int, default=None, dest="train_seed",
                     help="training randomness seed (torch/np/python/model init/dataloader/VQ-BeT)")
@@ -731,6 +740,17 @@ def main() -> None:
 
     # ---- model -------------------------------------------------------------
     model = build_model(cfg).to(device)
+    # Attention kernel: leave the module default unless asked. A non-default request that
+    # matches zero modules is an error, not a no-op -- a flag that silently does nothing
+    # is how a benchmark table ends up mislabelled.
+    if args.attn is not None:
+        n_attn = set_attn_impl(model, args.attn)
+        if n_attn == 0:
+            raise SystemExit(f"--attn {args.attn}: no module exposes an attn_impl selector")
+        print(f"[attn] kernel={args.attn} on {n_attn} attention module(s)")
+    else:
+        n_attn = set_attn_impl(model, "current")
+        print(f"[attn] kernel=current (module default) on {n_attn} attention module(s)")
     optim = model.configure_optimizers(cfg.weight_decay, cfg.lr, tuple(cfg.betas))
     # grad_norm / layer_grad_norm are computed over the POLICY optimizer's parameters
     # ONLY. The VQ tokenizer is in no optimizer, so any grad it carries is not an

@@ -52,6 +52,18 @@ class CausalSelfAttention(nn.Module):
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         self.register_buffer("mask", generate_block_causal_mask(n_patches, block_size))
+        # ---- attention kernel selector -------------------------------------------
+        # "current" = the hand-written q@k^T -> masked_fill(-inf) -> softmax -> @v chain
+        # and is the DEFAULT, so every run recorded in doc/ stays bit-identical.
+        # "sdpa" routes the SAME math through F.scaled_dot_product_attention: same mask
+        # object (bool, True == may attend -- exactly the convention
+        # generate_block_causal_mask builds), same n_head/head_dim, same dropout
+        # probability applied at the same point in the chain, same residual path.
+        # Optional because the materialized [B, nh, T, T] score matrix is the largest
+        # intermediate in this model (T = block_size*n_patches = 1280, nh = 8
+        # -> 419 MB fp32, plus a second copy for masked_fill); the fused kernels never
+        # build it. Set it with `set_attn_impl` / `train.py --attn sdpa`, not by hand.
+        self.attn_impl = "current"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape
@@ -59,13 +71,61 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        att = q @ k.transpose(-2, -1) * (self.head_dim ** -0.5)  # [B, nh, T, T]
-        att = att.masked_fill(~self.mask[:T, :T], float("-inf"))
-        att = torch.softmax(att, dim=-1)
-        att = self.attn_dropout(att)
-        y = att @ v  # [B, nh, T, hd]
+        if self.attn_impl == "sdpa":
+            # Mask is passed as a [T, T] bool and broadcast over [B, nh]. The kernel
+            # applies dropout at the identical point (post-softmax weights, before @v),
+            # so dropout_p carries the same semantics as self.attn_dropout below.
+            # is_causal must stay False: the block-causal structure is already in the
+            # mask, and a True here would mask a second time (strictly lower-triangular)
+            # and silently change the token interaction.
+            y = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=self.mask[:T, :T],
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=False,
+            )  # [B, nh, T, hd]
+        else:
+            att = q @ k.transpose(-2, -1) * (self.head_dim ** -0.5)  # [B, nh, T, T]
+            att = att.masked_fill(~self.mask[:T, :T], float("-inf"))
+            att = torch.softmax(att, dim=-1)
+            att = self.attn_dropout(att)
+            y = att @ v  # [B, nh, T, hd]
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.resid_dropout(self.c_proj(y))
+
+
+ATTN_IMPLS = ("current", "sdpa")
+
+
+def set_attn_impl(model: nn.Module, impl: str) -> int:
+    """Set the attention-kernel selector on every attention module. Returns how many.
+
+    Covers all THREE attention sites in this repo, which is why it lives here rather
+    than being copied per module:
+
+      * ``gpt.CausalSelfAttention``        -- block-causal trunk self-attention
+      * ``global_policy.GlobalSelfAttention`` -- global-policy variant (custom mask)
+      * ``td_head.CrossAttention``         -- denoiser cross-attention, no mask at all
+
+    Duck-typed on the ``attn_impl`` attribute rather than isinstance(), for the same
+    reason the two attributes ARE the contract: subclasses and the VQ-BeT arm's own
+    attention (which has no selector) must be skipped silently, and
+    ``policy_mode == "global"`` builds a different trunk class. A caller that asked for
+    a NON-default kernel should check the return value -- ``train.py --attn`` treats
+    ``0`` as an error instead of pretending the flag did something.
+
+    Kept in sync with the identical helper on the sibling Patch Policy + Flow-Matching
+    line, where the same switch was benchmarked (see doc/2026-10-27_attn_sdpa.md for the
+    numbers and their provenance).
+    """
+    if impl not in ATTN_IMPLS:
+        raise ValueError(f"unknown attn impl {impl!r} (expected one of {ATTN_IMPLS})")
+    n = 0
+    for m in model.modules():
+        if hasattr(m, "attn_impl"):
+            m.attn_impl = impl
+            n += 1
+    return n
 
 
 class MLP(nn.Module):

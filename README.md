@@ -148,6 +148,7 @@ scripts/
   audit_*.py  report_*.py  overfit_small.py  check_p4_n100_superset.py
 tests/
   test_td_contract.py   contract tests: t-shape, cls_from, clip_sample, normaliser
+  test_attn_sdpa.py     attention-kernel parity: hand-written chain vs SDPA, mask semantics
 doc/                    dated engineering log — see doc/README.md for the index
 ```
 
@@ -203,6 +204,43 @@ point. The four commands above are what you run to reproduce the study anywhere 
 
 ---
 
+## Attention kernel: hand-written vs SDPA
+
+Both arms share one trunk, and that trunk's attention has **two implementations of the same
+math**, chosen at runtime:
+
+| `attn_impl` | what runs | when |
+|---|---|---|
+| `current` (**default**) | `q@k^T -> masked_fill(-inf) -> softmax -> @v`, materialises `[B, nh, T, T]` | every run in `doc/`. Kept as the default so those numbers reproduce **bit-identically** |
+| `sdpa` | `F.scaled_dot_product_attention` with the *same* bool mask, dropout probability and head layout | opt-in: `--attn sdpa` |
+
+It covers all three attention sites — `gpt.CausalSelfAttention` (block-causal),
+`global_policy.GlobalSelfAttention` (custom mask), `td_head.CrossAttention` (no mask) — via
+one helper, `gpt.set_attn_impl`, which `train.py --attn` calls. A non-default request that
+matches zero modules is a `SystemExit`, not a silent no-op.
+
+Measured on this repo's trunk (8 layers / 512 dim / S=1280, batch 4, fwd+bwd+AdamW,
+CUDA events, RTX 4060 Laptop — a Windows torch build **without** FlashAttention compiled in,
+so the fused backend here is mem-efficient):
+
+| dtype | current | sdpa | speedup | peak VRAM |
+|---|---|---|---|---|
+| fp32 | 356.97 ms/step | 263.87 ms/step | 1.35x | 3751 -> 1748 MB |
+| bf16 | 148.50 ms/step | 73.53 ms/step | 2.02x | 1900 -> 902 MB |
+
+Parity is a test, not a promise: `tests/test_attn_sdpa.py` (fp32 max-abs 9e-8..4e-7; bf16 at
+the production shape 4.9e-4) and it also pins the mask convention by perturbing a late key and
+asserting earlier blocks do not move.
+
+Two things this deliberately does **not** claim: (1) "SDPA" is not a synonym for
+"FlashAttention" — which fused kernel is selected depends on dtype, mask, build and card;
+(2) SDPA changes summation order, so a run diverges from `current` in the last digits and the
+final weights are **not** bit-identical. `doc/2026-10-27_attn_sdpa.md` has the full ledger,
+including why the 2.29x figure from the sibling Flow-Matching line does not transfer here
+(that one includes bf16 AMP; this repo's `train.py` has no `--amp`).
+
+---
+
 ## Documentation
 
 The engineering log is in `doc/`, one dated file per stage. `doc/README.md` is the index.
@@ -220,6 +258,7 @@ Read in this order:
 | DP arm | `2026-09-18_DP_orig_run_log.md` | The **upstream's own** Diffusion Policy run unmodified |
 | **Results** | **`2026-09-19_ablation_record.md`** | **Every number in one place, each with its source file and evaluator.** Start here for results |
 | 400ep | `2026-09-20_400ep_run_log.md` | K=20/K=40, 400 epochs from scratch, rollout every 5 epochs |
+| Kernel | `2026-10-27_attn_sdpa.md` | Attention `current` vs `sdpa`: parity, mask semantics, kernel actually selected, and what the speedup does *not* transfer to |
 
 ---
 

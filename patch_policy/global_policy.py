@@ -53,6 +53,11 @@ class GlobalSelfAttention(nn.Module):
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         self.register_buffer("mask", build_global_mask(n_state, n_query))
+        # Attention kernel selector -- see gpt.set_attn_impl. Default "current" keeps
+        # every recorded global-policy run bit-identical; "sdpa" runs the same math
+        # through F.scaled_dot_product_attention with the same bool mask (True == may
+        # attend) and the same dropout placement.
+        self.attn_impl = "current"
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, T, C = x.shape
@@ -60,11 +65,21 @@ class GlobalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        att = q @ k.transpose(-2, -1) * (self.head_dim ** -0.5)
-        att = att.masked_fill(~self.mask[:T, :T], float("-inf"))
-        att = torch.softmax(att, dim=-1)
-        att = self.attn_dropout(att)
-        y = att @ v
+        if self.attn_impl == "sdpa":
+            # is_causal=False: the "states see everything, queries see all" structure
+            # lives in the mask; the kernel must not add a second causal mask.
+            y = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=self.mask[:T, :T],
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=False,
+            )
+        else:
+            att = q @ k.transpose(-2, -1) * (self.head_dim ** -0.5)
+            att = att.masked_fill(~self.mask[:T, :T], float("-inf"))
+            att = torch.softmax(att, dim=-1)
+            att = self.attn_dropout(att)
+            y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.resid_dropout(self.c_proj(y))
 

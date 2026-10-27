@@ -283,6 +283,11 @@ class CrossAttention(nn.Module):
         self.v = nn.Linear(ctx_dim, d_model)
         self.out = nn.Linear(d_model, d_model)
         self.attn_dropout = nn.Dropout(dropout)
+        # Kernel selector -- see gpt.set_attn_impl. This site has NO mask at all, so it is
+        # the one place where the fused kernels get the friendliest layout: no
+        # [B, nh, Q, M] score matrix is ever built, and q_len=20 x m_len=5 is small
+        # enough that the win here is memory/launch overhead, not FLOPs.
+        self.attn_impl = "current"
 
     def forward(self, query: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
         """query [B,Q,D] x ctx [B,M,C] -> [B,Q,D]."""
@@ -292,9 +297,18 @@ class CrossAttention(nn.Module):
         q = self.q(query).view(b, q_len, h, dh).transpose(1, 2)
         k = self.k(ctx).view(b, m_len, h, dh).transpose(1, 2)
         v = self.v(ctx).view(b, m_len, h, dh).transpose(1, 2)
-        attn = (q @ k.transpose(-2, -1)) * (dh ** -0.5)
-        attn = self.attn_dropout(attn.softmax(dim=-1))
-        y = (attn @ v).transpose(1, 2).reshape(b, q_len, d)
+        if self.attn_impl == "sdpa":
+            y = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=False,
+            )
+        else:
+            attn = (q @ k.transpose(-2, -1)) * (dh ** -0.5)
+            attn = self.attn_dropout(attn.softmax(dim=-1))
+            y = attn @ v
+        y = y.transpose(1, 2).reshape(b, q_len, d)
         return self.out(y)
 
 
