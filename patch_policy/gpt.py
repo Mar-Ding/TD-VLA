@@ -107,12 +107,15 @@ def set_attn_impl(model: nn.Module, impl: str) -> int:
       * ``global_policy.GlobalSelfAttention`` -- global-policy variant (custom mask)
       * ``td_head.CrossAttention``         -- denoiser cross-attention, no mask at all
 
-    Duck-typed on the ``attn_impl`` attribute rather than isinstance(), for the same
-    reason the two attributes ARE the contract: subclasses and the VQ-BeT arm's own
-    attention (which has no selector) must be skipped silently, and
-    ``policy_mode == "global"`` builds a different trunk class. A caller that asked for
-    a NON-default kernel should check the return value -- ``train.py --attn`` treats
-    ``0`` as an error instead of pretending the flag did something.
+    Duck-typed on the ``attn_impl`` attribute rather than isinstance(): attention here is
+    reached through three different classes and through subclasses, and everything that
+    has no selector (embeddings, MLPs, the cross-attention's Linear projections) must be
+    skipped silently -- including ``policy_mode == "global"``, which builds a different
+    trunk class. Verified against both arms, not just the TD one: ``vqbet.BehaviorTransformer``
+    owns no attention of its own, it calls the same ``gpt.GPT`` trunk (vqbet.py:163), so
+    ``--attn`` covers the VQ-BeT arm identically. A caller that asked for a NON-default
+    kernel should still check the return value -- ``train.py --attn`` treats ``0`` as an
+    error instead of pretending the flag did something.
 
     Kept in sync with the identical helper on the sibling Patch Policy + Flow-Matching
     line, where the same switch was benchmarked (see doc/2026-10-27_attn_sdpa.md for the
